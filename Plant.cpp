@@ -51,9 +51,10 @@ bool Plant::isReadyForWater()
     
     int moistureSample = analogRead(m_sensorNumber);
 
-    String plantName = "Current Plant being sampled: " + m_plantName + " Moisture level " + String(moistureSample);
-
-    bot.sendMessage(CHAT_ID, plantName, "");
+    if (moistureSample > DRY_SOIL) {
+      String plantName = "Current Plant being sampled: " + m_plantName + " Moisture level " + String(moistureSample);
+      bot.sendMessage(CHAT_ID, plantName, "");
+    }
 
     if ((moistureSample > DRY_SOIL) && (moistureSample < 2700)) { // check that sensor measures valid result and does not go crazy
       // 1. check for reliable reading of the sensor (i.e at least 10 reads in the same range)
@@ -67,7 +68,7 @@ bool Plant::isReadyForWater()
       if (((totalSamples / 10) > moistureSample + 100) || ((totalSamples / 10) < moistureSample - 100)){
         return false;
       }
-      m_lastWaterCount = MINIMAL_WATER_CYCLES; // update the cycles back to minimal number, so at least 4 days of no water after that
+      m_lastWaterCount = MINIMAL_WATER_CYCLES; // update the cycles back to minimal number, so at least 3 days of no water after that
       return true;
     }
     return false; // soil is not dry yet, or the sensor went crazy with invalid values.
@@ -91,7 +92,7 @@ void Plant::waterThePlant()
 
 
 String Plant::LastTimeWatered(){
-  int hoursSinceLastWater = (m_lastTimeWatered*160); // each time a plant being sampled is once in 160 minutes
+  int hoursSinceLastWater = (m_lastTimeWatered*240); // each time a plant being sampled is once in 240 minutes
   String returnString = String(hoursSinceLastWater / 1440) + " Days."; // 1440 minutes is 24 hours, meaning one day
   m_lastTimeWatered = 0;
   return returnString;

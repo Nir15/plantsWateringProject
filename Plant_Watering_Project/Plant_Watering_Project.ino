@@ -11,6 +11,8 @@
 // #include <WiFiClientSecure.h>
 // #include <UniversalTelegramBot.h>   // Universal Telegram Bot Library written by Brian Lough: https://github.com/witnessmenow/Universal-Arduino-Telegram-Bot
 #include <ArduinoJson.h>
+#include "EEPROM.h"
+#include "esp_task_wdt.h"
 
 // Replace with your network credentials
 const char* ssid     = "********";     // change this for your own network
@@ -25,7 +27,6 @@ const char* password = "********";  // change this for your own network
 #ifndef CHAT_ID
   #define CHAT_ID "**********"
 #endif
-
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
 
@@ -49,12 +50,35 @@ UniversalTelegramBot bot(BOTtoken, client);
 #define LOQUAT_SENSOR_PIN           33  /*26*/  // 12 Volts pump // shares relay with big avocado due to lack of pins
 #define POMELAS_SENSOR_PIN          39  // 12 Volts pump (2 pumps)
 
-#define DELAY_IN_MICROS             60*20*1000000 // 1000000-us * 60 * 20 = 20 minutes. this means every plant is being sampled in 20*8 = 160 minutes intervals.
+#define DELAY_IN_MICROS             60*30*1000000 // 1000000-us * 60 * 30 = 30 minutes. this means every plant is being sampled in 30*8 = 240 minutes intervals.
+
+//Setup the EEPROM
+#define ADDRESS 0          // We'll store the last position of code we reached before reset, in the first EEPROM byte
+#define EEPROM_SIZE 4  // We only need one byte, 255 are available
+
+enum programPositionEnum {
+  Setup,
+  StartOfLoop,
+  WokeUp,
+  TryingToConnectWifi,
+  ConnectedToWifi
+};
 
 int arrayIndex = 0;
 Plant* plantsArray[8];
 
 void setup(){
+
+  esp_reset_reason_t resetReason = esp_reset_reason();
+
+  // Read the last position of code we reached before reset
+  EEPROM.begin(EEPROM_SIZE);
+  int readFlash = EEPROM.readInt(ADDRESS);
+
+  // Store the current program position in the EEPROM
+  EEPROM.writeInt(ADDRESS, programPositionEnum::Setup);                 
+  EEPROM.commit();  // The value will not be stored if commit is not called.
+
 
   plantsArray[0] = new Plant ("Big Avocado",
                               BIG_AVOCADO_SENSOR_PIN,
@@ -112,7 +136,6 @@ void setup(){
                               0,
                               true);
 
-  // Serial.begin(115200); // default is UART0 using pins 1 for TX and pin 3 for RX
   delay(5000);
 
   pinMode(RELAY_PIN_BIG_AVOCADO,    OUTPUT);         // Setting the Pin to output signal
@@ -149,11 +172,45 @@ void setup(){
   }
 
   delay(2000);
+  // when reseting the esp32 because of watchdog timeout, inform user where was the code last time before reseting
+  if (resetReason == esp_reset_reason_t::ESP_RST_TASK_WDT){
+    switch (readFlash){
+      case programPositionEnum::Setup:
+        bot.sendMessage(CHAT_ID, "Reset executed from setup", "");
+        break;
+      case programPositionEnum::StartOfLoop:
+        bot.sendMessage(CHAT_ID, "Reset executed from start of loop", "");
+        break;
+      case programPositionEnum::WokeUp:
+        bot.sendMessage(CHAT_ID, "Reset executed after waking up from light sleep", "");
+        break;
+      case programPositionEnum::TryingToConnectWifi:
+        bot.sendMessage(CHAT_ID, "Reset executed while trying to connect WiFi", "");
+        break;
+      case programPositionEnum::ConnectedToWifi:
+        bot.sendMessage(CHAT_ID, "Reset executed after connecting to WiFi", "");
+        break;
+      default:
+        bot.sendMessage(CHAT_ID, "Reset reason unknown", "");
+        break;
+    }
+  }
+  delay(2000);
   bot.sendMessage(CHAT_ID, "Plants water system is now active", "");
 }
 
 
+esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 10000,  // Timeout in milliseconds (e.g., 10 seconds)
+    .idle_core_mask = 0,  // No idle core tasks are subscribed by default
+    .trigger_panic = true // Trigger panic when WDT timeout occurs
+};
+
 void loop() {
+
+  // Store the current program position in the EEPROM
+  EEPROM.writeInt(ADDRESS, programPositionEnum::StartOfLoop);                 
+  EEPROM.commit();  // The value will not be stored if commit is not called.
 
   Plant* currentPlant = plantsArray[arrayIndex];
 
@@ -164,17 +221,39 @@ void loop() {
 
     bot.sendMessage(CHAT_ID, plantInfo, "");
   }
-
-  esp_sleep_enable_timer_wakeup(DELAY_IN_MICROS); // Configure wake up timer for 20 minutes
+  esp_sleep_enable_timer_wakeup(DELAY_IN_MICROS); // Configure wake up timer for 30 minutes
   esp_light_sleep_start(); // Enter light sleep mode
+
+
+  // Store the current program position in the EEPROM
+  EEPROM.writeInt(ADDRESS, programPositionEnum::WokeUp);                 
+  EEPROM.commit();  // The value will not be stored if commit is not called.
+
+  // Disable the Task Watchdog Timer for the entire program
+  esp_task_wdt_deinit();
 
   // connect to WiFi after waking up
   WiFi.begin(ssid, password);
+
   while(WiFi.status() != WL_CONNECTED) {
+    // Store the current program position in the EEPROM
+    EEPROM.writeInt(ADDRESS, programPositionEnum::TryingToConnectWifi);                 
+    EEPROM.commit();  // The value will not be stored if commit is not called.
     delay(500);
   }
+
+  esp_task_wdt_init(&wdt_config);  // Re-enable WDT with a 10-second timeout
+
+  // Store the current program position in the EEPROM
+  EEPROM.writeInt(ADDRESS, programPositionEnum::ConnectedToWifi);                 
+  EEPROM.commit();  // The value will not be stored if commit is not called.
+
   delay(1000); // give time for system to stable after waking up
 
   arrayIndex++;
-  arrayIndex %= 8; // keep index between 0 to 7
+  if (arrayIndex == 8) {
+    bot.sendMessage(CHAT_ID, "--- Finished a loop over all plants --- ", "");
+    arrayIndex = 0; // keep index between 0 to 7
+  }
+
 }
