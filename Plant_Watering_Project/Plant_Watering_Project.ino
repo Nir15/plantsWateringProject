@@ -54,7 +54,36 @@ UniversalTelegramBot bot(BOTtoken, client);
 
 //Setup the EEPROM
 #define ADDRESS 0          // We'll store the last position of code we reached before reset, in the first EEPROM byte
-#define EEPROM_SIZE 4  // We only need one byte, 255 are available
+#define EEPROM_SIZE 4*9    // the flash will be written to whenever the plant is watered, so in the next reset the value of last water time will be kept
+                           // one extra use for the flash is to monitor any resets caused by WTD timoeout
+int addressesArray[8] = {4,8,12,16,20,24,28,32};
+int arrayIndex = 0;
+Plant* plantsArray[8];
+int resetCounter = 192; // 192 stands for 192 plants samples. why? because samples take place in 30 minutes intervals, meaning 30*192 = 4 days.
+                        // the system will reset itself once in 4 days, and will keep track of last time each plant was watered. this way the timers
+                        // will not overflow, and the system could run without disruptions.
+
+void updateInitialCycles(int& cycles, int index){
+  cycles = EEPROM.readInt(addressesArray[index]);
+  if ((cycles < 0) || cycles > MINIMAL_WATER_CYCLES){
+    cycles = 0;
+  }
+}
+
+void updateCyclesBeforeReset(){
+    for (int i=0; i < 8; i++){
+      EEPROM.writeInt(addressesArray[i], plantsArray[i]->getLastWaterCount());               
+      EEPROM.commit();  // The value will not be stored if commit is not called.
+    }
+}
+
+void botUpdateCyclesAfterReset(){
+    for (int i=0; i < 8; i++){
+      String botMessage = "Plant: " + plantsArray[i]->getPlantName() + " has " + plantsArray[i]->getLastWaterCount() + " cycles left.";
+      bot.sendMessage(CHAT_ID, botMessage, "");
+      delay(5000);
+    }
+}
 
 enum programPositionEnum {
   Setup,
@@ -64,8 +93,6 @@ enum programPositionEnum {
   ConnectedToWifi
 };
 
-int arrayIndex = 0;
-Plant* plantsArray[8];
 
 void setup(){
 
@@ -79,61 +106,70 @@ void setup(){
   EEPROM.writeInt(ADDRESS, programPositionEnum::Setup);                 
   EEPROM.commit();  // The value will not be stored if commit is not called.
 
+  int initialWaterCycles;
 
+  updateInitialCycles(initialWaterCycles, 0);
   plantsArray[0] = new Plant ("Big Avocado",
                               BIG_AVOCADO_SENSOR_PIN,
                               RELAY_PIN_BIG_AVOCADO,
                               4,
-                              0,
-                              true);
+                              initialWaterCycles,
+                              false);
   
+  updateInitialCycles(initialWaterCycles, 1);
   plantsArray[1] = new Plant ("Small Avocado",
                               SMALL_AVOCADO_SENSOR_PIN,
                               RELAY_PIN_SMALL_AVOCADO,
                               2,
-                              0,
+                              initialWaterCycles,
                               true);
 
+  updateInitialCycles(initialWaterCycles, 2);
   plantsArray[2] = new Plant ("Pomelas",
                               POMELAS_SENSOR_PIN,
                               RELAY_PIN_POMELAS,
                               3,
-                              0,
-                              true);
+                              initialWaterCycles,
+                              false);
   
+  updateInitialCycles(initialWaterCycles, 3);
   plantsArray[3] = new Plant ("Big Pinapple",
                               BIG_PINEAPPLE_SENSOR_PIN,
                               RELAY_PIN_BIG_PINEAPPLE,
                               2,
-                              0,
+                              initialWaterCycles,
                               true);
 
+  updateInitialCycles(initialWaterCycles, 4);
   plantsArray[4] = new Plant ("Small Pinapple",
                               SMALL_PINAPPLE_SENSOR_PIN,
                               RELAY_PIN_SMALL_PINAPPLE,
                               2,
-                              0,
+                              initialWaterCycles,
                               true);
   
+  updateInitialCycles(initialWaterCycles, 5);
   plantsArray[5] = new Plant ("Loquat",
                               LOQUAT_SENSOR_PIN,
                               RELAY_PIN_LOQUAT,
                               3,
-                              0,
-                              true);
+                              initialWaterCycles,
+                              false);
 
+  updateInitialCycles(initialWaterCycles, 6);
   plantsArray[6] = new Plant ("Lemon",
                               LEMON_SENSOR_PIN,
                               RELAY_PIN_LEMON,
                               5,
-                              0,
-                              true);
-  
+                              initialWaterCycles,
+                              false);
+
+  updateInitialCycles(initialWaterCycles, 7);
   plantsArray[7] = new Plant ("Monsteras",
                               MONSTERAS_SENSOR_PIN,
                               RELAY_PIN_MONSTERAS,
                               3,
-                              0,
+                              initialWaterCycles,
                               true);
 
   delay(5000);
@@ -170,6 +206,8 @@ void setup(){
   while(WiFi.status() != WL_CONNECTED) {
     delay(500);
   }
+
+  botUpdateCyclesAfterReset(); // update user with the remaining time to wait (cycles) for each plant
 
   delay(2000);
   // when reseting the esp32 because of watchdog timeout, inform user where was the code last time before reseting
@@ -208,6 +246,13 @@ esp_task_wdt_config_t wdt_config = {
 
 void loop() {
 
+  if (resetCounter == 0){
+    // Store the current cycles count of plant before executing restart to the system
+    updateCyclesBeforeReset();
+    esp_restart(); // restart the esp32 every 4 days. 
+  }
+  resetCounter--;
+
   // Store the current program position in the EEPROM
   EEPROM.writeInt(ADDRESS, programPositionEnum::StartOfLoop);                 
   EEPROM.commit();  // The value will not be stored if commit is not called.
@@ -217,6 +262,7 @@ void loop() {
   // enter this section only when the plant's soil is dry enough to water it again
   if (currentPlant->isReadyForWater()) {
     currentPlant->waterThePlant();
+
     String plantInfo = "Plant: " + currentPlant->getPlantName() + " was watered after " + currentPlant->LastTimeWatered();
 
     bot.sendMessage(CHAT_ID, plantInfo, "");

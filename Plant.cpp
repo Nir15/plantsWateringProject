@@ -2,7 +2,7 @@
 #include "Plant.h"
 
 #ifndef CHAT_ID
-  #define CHAT_ID "**********"
+  #define CHAT_ID "********"
 #endif
 
 extern UniversalTelegramBot bot;
