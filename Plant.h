@@ -20,20 +20,21 @@
 class Plant {
   private:
     String  m_plantName;
-    uint8_t m_sensorNumber;
-    uint8_t m_relayNumber;
-    uint8_t m_waterPortions;
-    uint8_t m_lastWaterCount;
+    uint32_t m_sensorNumber;
+    uint32_t m_relayNumber;
+    uint32_t m_waterPortions;
+    uint32_t m_lastWaterCount;
     bool    m_isSmallPump;
-    uint8_t m_lastTimeWatered {0};
+    uint32_t m_lastTimeWatered;
 
   public:
 
-    Plant(String name, uint8_t sensor, uint8_t relay, uint8_t portions, uint8_t waterCount, bool pump);
+    Plant(String name, uint32_t sensor, uint32_t relay, uint32_t portions, uint32_t waterCount, bool pump, uint32_t lastTime);
     bool minimalTimePassed {false};
     bool isReadyForWater();
     void waterThePlant();
     String getPlantName() {return m_plantName;}
     String LastTimeWatered();
     int getLastWaterCount() {return m_lastWaterCount;}
+    int getLastTimeWatered() {return m_lastTimeWatered;}
 };

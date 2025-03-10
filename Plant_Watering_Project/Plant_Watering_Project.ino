@@ -54,32 +54,61 @@ UniversalTelegramBot bot(BOTtoken, client);
 
 //Setup the EEPROM
 #define ADDRESS 0          // We'll store the last position of code we reached before reset, in the first EEPROM byte
-#define EEPROM_SIZE 4*9    // the flash will be written to whenever the plant is watered, so in the next reset the value of last water time will be kept
-                           // one extra use for the flash is to monitor any resets caused by WTD timoeout
-int addressesArray[8] = {4,8,12,16,20,24,28,32};
-int arrayIndex = 0;
-Plant* plantsArray[8];
-int resetCounter = 192; // 192 stands for 192 plants samples. why? because samples take place in 30 minutes intervals, meaning 30*192 = 4 days.
+#define EEPROM_SIZE 4*17    // the flash will be written to whenever the plant is watered, so in the next reset the value of last water time will be kept
+                           // one extra use for the flash is to monitor any resets caused by WTD timoeout. 17 is for 2 arrays of 8integers, and one integer of reset reason 
+int g_addressesCyclesArray[8] = {4,8,12,16,20,24,28,32}; // addresses to keep the cycles left to wait for each plant before next possible watering
+int g_addressesLastTimeWateredArray[8] = {36,40,44,48,52,56,60,64}; // addresses to keep the last time watered for each plant
+int g_arrayIndex = 0;
+Plant* g_plantsArray[8];
+int g_resetCounter = 192; // 192 stands for 192 plants samples. why? because samples take place in 30 minutes intervals, meaning 30*192 = 4 days.
                         // the system will reset itself once in 4 days, and will keep track of last time each plant was watered. this way the timers
                         // will not overflow, and the system could run without disruptions.
 
+
+// when waking up from reset, update every plant object with its remaining cycles (4 hours per cycles) to wait
+// until next watering could be available. minimum time should be 3 days between one watering to the next 
 void updateInitialCycles(int& cycles, int index){
-  cycles = EEPROM.readInt(addressesArray[index]);
+  cycles = EEPROM.readInt(g_addressesCyclesArray[index]);
   if ((cycles < 0) || cycles > MINIMAL_WATER_CYCLES){
     cycles = 0;
   }
 }
 
+// read from flash the value of the last time plant was watered, update it in local variable for keeping track of time in 
+// new round of system after forcing reset
+void updateLastTimeWatered(int& lastTime, int index){
+  lastTime = EEPROM.readInt(g_addressesLastTimeWateredArray[index]);
+  if ((lastTime < 0) || lastTime > 240) { // 240 represents 30 days since last time waterd (240 minutes per cycle * 240 = 40 days)
+    lastTime = 0;
+  }
+}
+
+
+// write to flash the remaining cycles to wait for each of the plants. Those values will then be read 
+// in the setup function after reset takes place 
 void updateCyclesBeforeReset(){
     for (int i=0; i < 8; i++){
-      EEPROM.writeInt(addressesArray[i], plantsArray[i]->getLastWaterCount());               
+      EEPROM.writeInt(g_addressesCyclesArray[i], g_plantsArray[i]->getLastWaterCount());               
       EEPROM.commit();  // The value will not be stored if commit is not called.
     }
 }
 
+
+// write to flash the last time each of the plants was watered. Those values will then be read 
+// with updateLastTimeWatered after reset takes place 
+void updateLastTimeWateredBeforeReset(){
+    for (int i=0; i < 8; i++){
+      EEPROM.writeInt(g_addressesLastTimeWateredArray[i], g_plantsArray[i]->getLastTimeWatered());               
+      EEPROM.commit();  // The value will not be stored if commit is not called.
+    }
+}
+
+
+// update user for each of the plant's remaining cycles to wait before next watering is available.
+// this should be in the range of 0 to MINIMAL_WATER_CYCLES
 void botUpdateCyclesAfterReset(){
     for (int i=0; i < 8; i++){
-      String botMessage = "Plant: " + plantsArray[i]->getPlantName() + " has " + plantsArray[i]->getLastWaterCount() + " cycles left.";
+      String botMessage = "Plant: " + g_plantsArray[i]->getPlantName() + " has " + g_plantsArray[i]->getLastWaterCount() + " cycles left.";
       bot.sendMessage(CHAT_ID, botMessage, "");
       delay(5000);
     }
@@ -107,70 +136,87 @@ void setup(){
   EEPROM.commit();  // The value will not be stored if commit is not called.
 
   int initialWaterCycles;
+  int lastTimeWateredUpdate;
 
   updateInitialCycles(initialWaterCycles, 0);
-  plantsArray[0] = new Plant ("Big Avocado",
+  updateLastTimeWatered(lastTimeWateredUpdate,0);
+  g_plantsArray[0] = new Plant ("Big Avocado",
                               BIG_AVOCADO_SENSOR_PIN,
                               RELAY_PIN_BIG_AVOCADO,
                               4,
                               initialWaterCycles,
-                              false);
+                              false,
+                              lastTimeWateredUpdate);
   
   updateInitialCycles(initialWaterCycles, 1);
-  plantsArray[1] = new Plant ("Small Avocado",
+  updateLastTimeWatered(lastTimeWateredUpdate,1);
+  g_plantsArray[1] = new Plant ("Small Avocado",
                               SMALL_AVOCADO_SENSOR_PIN,
                               RELAY_PIN_SMALL_AVOCADO,
                               2,
                               initialWaterCycles,
-                              true);
+                              false,
+                              lastTimeWateredUpdate);
 
   updateInitialCycles(initialWaterCycles, 2);
-  plantsArray[2] = new Plant ("Pomelas",
+  updateLastTimeWatered(lastTimeWateredUpdate,2);
+  g_plantsArray[2] = new Plant ("Pomelas",
                               POMELAS_SENSOR_PIN,
                               RELAY_PIN_POMELAS,
                               3,
                               initialWaterCycles,
-                              false);
+                              false,
+                              lastTimeWateredUpdate);
   
   updateInitialCycles(initialWaterCycles, 3);
-  plantsArray[3] = new Plant ("Big Pinapple",
+  updateLastTimeWatered(lastTimeWateredUpdate,3);
+  g_plantsArray[3] = new Plant ("Big Pinapple",
                               BIG_PINEAPPLE_SENSOR_PIN,
                               RELAY_PIN_BIG_PINEAPPLE,
                               2,
                               initialWaterCycles,
-                              true);
+                              false,
+                              lastTimeWateredUpdate);
 
   updateInitialCycles(initialWaterCycles, 4);
-  plantsArray[4] = new Plant ("Small Pinapple",
+  updateLastTimeWatered(lastTimeWateredUpdate,4);
+  g_plantsArray[4] = new Plant ("Small Pinapple",
                               SMALL_PINAPPLE_SENSOR_PIN,
                               RELAY_PIN_SMALL_PINAPPLE,
                               2,
                               initialWaterCycles,
-                              true);
+                              false,
+                              lastTimeWateredUpdate);
   
   updateInitialCycles(initialWaterCycles, 5);
-  plantsArray[5] = new Plant ("Loquat",
+  updateLastTimeWatered(lastTimeWateredUpdate,5);
+  g_plantsArray[5] = new Plant ("Loquat",
                               LOQUAT_SENSOR_PIN,
                               RELAY_PIN_LOQUAT,
                               3,
                               initialWaterCycles,
-                              false);
+                              false,
+                              lastTimeWateredUpdate);
 
   updateInitialCycles(initialWaterCycles, 6);
-  plantsArray[6] = new Plant ("Lemon",
+  updateLastTimeWatered(lastTimeWateredUpdate,6);
+  g_plantsArray[6] = new Plant ("Lemon",
                               LEMON_SENSOR_PIN,
                               RELAY_PIN_LEMON,
                               5,
                               initialWaterCycles,
-                              false);
+                              false,
+                              lastTimeWateredUpdate);
 
   updateInitialCycles(initialWaterCycles, 7);
-  plantsArray[7] = new Plant ("Monsteras",
+  updateLastTimeWatered(lastTimeWateredUpdate,7);
+  g_plantsArray[7] = new Plant ("Monsteras",
                               MONSTERAS_SENSOR_PIN,
                               RELAY_PIN_MONSTERAS,
                               3,
                               initialWaterCycles,
-                              true);
+                              false,
+                              lastTimeWateredUpdate);
 
   delay(5000);
 
@@ -246,18 +292,19 @@ esp_task_wdt_config_t wdt_config = {
 
 void loop() {
 
-  if (resetCounter == 0){
+  if (g_resetCounter == 0){
     // Store the current cycles count of plant before executing restart to the system
     updateCyclesBeforeReset();
+    updateLastTimeWateredBeforeReset();
     esp_restart(); // restart the esp32 every 4 days. 
   }
-  resetCounter--;
+  g_resetCounter--;
 
   // Store the current program position in the EEPROM
   EEPROM.writeInt(ADDRESS, programPositionEnum::StartOfLoop);                 
   EEPROM.commit();  // The value will not be stored if commit is not called.
 
-  Plant* currentPlant = plantsArray[arrayIndex];
+  Plant* currentPlant = g_plantsArray[g_arrayIndex % 8];
 
   // enter this section only when the plant's soil is dry enough to water it again
   if (currentPlant->isReadyForWater()) {
@@ -296,10 +343,10 @@ void loop() {
 
   delay(1000); // give time for system to stable after waking up
 
-  arrayIndex++;
-  if (arrayIndex == 8) {
-    bot.sendMessage(CHAT_ID, "--- Finished a loop over all plants --- ", "");
-    arrayIndex = 0; // keep index between 0 to 7
+  g_arrayIndex++;
+  if (g_arrayIndex == 24) { // log message once in 24 * 30 = 720 minutes = 12 hours
+    bot.sendMessage(CHAT_ID, "--- System is working properly --- ", "");
+    g_arrayIndex = 0; // keep index between 0 to 7
   }
 
 }

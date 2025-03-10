@@ -7,9 +7,9 @@
 
 extern UniversalTelegramBot bot;
 
-Plant::Plant(String name, uint8_t sensor, uint8_t relay, uint8_t portions, uint8_t waterCount, bool pump) :
+Plant::Plant(String name, uint32_t sensor, uint32_t relay, uint32_t portions, uint32_t waterCount, bool pump, uint32_t lastTime) :
               m_plantName(name), m_sensorNumber(sensor), m_relayNumber(relay), m_waterPortions(portions),
-              m_lastWaterCount(waterCount), m_isSmallPump(pump) {}
+              m_lastWaterCount(waterCount), m_isSmallPump(pump), m_lastTimeWatered(lastTime) {}
 
 
 // this function indicates if the plant is ready for the next watering round, or not.
@@ -51,14 +51,14 @@ bool Plant::isReadyForWater()
     
     int moistureSample = analogRead(m_sensorNumber);
 
-    if (moistureSample > DRY_SOIL) {
-      String plantName = "Current Plant being sampled: " + m_plantName + " Moisture level " + String(moistureSample);
-      bot.sendMessage(CHAT_ID, plantName, "");
-    }
+    // if (moistureSample > DRY_SOIL) {
+    //   String plantName = "Current Plant being sampled: " + m_plantName + " Moisture level " + String(moistureSample);
+    //   bot.sendMessage(CHAT_ID, plantName, "");
+    // }
 
     if ((moistureSample > DRY_SOIL) && (moistureSample < 2700)) { // check that sensor measures valid result and does not go crazy
       // 1. check for reliable reading of the sensor (i.e at least 10 reads in the same range)
-      uint16_t totalSamples = 0;
+      uint32_t totalSamples = 0;
       for (int i = 0; i < 10; i++){
         delay(1000);
         totalSamples += analogRead(m_sensorNumber);
